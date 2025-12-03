@@ -49,6 +49,7 @@
             max-height: 400px;
         }
     </style>
+    <script src="[https://maps.googleapis.com/maps/api/js?key=AIzaSyAOStiNglNEGEnPnhDxJG0RSQqgJXVtUQw&libraries=places,geometry&callback=initMap](https://maps.googleapis.com/maps/api/js?key=ここに取得したAPIキーを貼り付ける&libraries=places,geometry&callback=initMap)" async defer></script>
     
     </head>
 <body class="bg-gray-100 min-h-screen p-2 sm:p-6 text-gray-800">
@@ -81,8 +82,14 @@
         // ===============================================
         // 1. 状態管理 (State & Logic)
         // ===============================================
-        const APP_VERSION = '2.1'; // バージョン管理用
+        const APP_VERSION = '2.2'; // バージョンを2.2に更新
 
+        // ★★★ 修正箇所: Google Maps API読み込み後に呼ばれる関数
+        function initMap() {
+        // APIが正常に読み込まれたことの確認用。
+        console.log("Google Maps API Loaded successfully.");
+        }
+    
         const generateDefaultItinerary = () => ({
             version: APP_VERSION,
             planName: "新規旅程プラン " + new Date().toLocaleDateString('ja-JP'),
