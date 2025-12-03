@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>旅程プランナー (v2.1)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        
+        /* カスタムスタイル */
+        .draggable-item { cursor: grab; transition: all 0.2s; }
+        .dragging { opacity: 0.5; transform: scale(1.02); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+        .drag-handle { cursor: move; }
+
+        .nav-button.active {
+            background-color: #4f46e5; color: white; border-bottom: 4px solid #6366f1;
+        }
+        .nav-button:not(.active) {
+            background-color: #f9fafb; color: #1f2937;
+        }
+        
+        /* しおり用スタイル */
+        .shiori-row {
+            display: flex;
+            align-items: flex-start;
+            padding: 12px 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .shiori-num {
+            flex-shrink: 0;
+            width: 50px;
+            font-weight: 800;
+            color: #4f46e5; /* Indigo-600 */
+        }
+        .shiori-content {
+            flex-grow: 1;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        /* 折りたたみ用地図コンテナ */
+        .map-container {
+            transition: max-height 0.3s ease-out;
+            max-height: 0;
+            overflow: hidden;
+        }
+        .map-container.open {
+            max-height: 400px;
+        }
+    </style>
+    
+    </head>
+<body class="bg-gray-100 min-h-screen p-2 sm:p-6 text-gray-800">
+
+    <div class="max-w-4xl mx-auto bg-white rounded-3xl shadow-2xl overflow-hidden">
+        
+        <header class="p-6 bg-indigo-700 text-white shadow-xl flex justify-between items-center">
+            <h1 class="text-2xl sm:text-3xl font-extrabold flex items-center gap-2">
+                <span>🗺️</span> 旅程プランナー
+                <span class="text-xs bg-indigo-500 px-2 py-1 rounded-full uppercase tracking-wider">v2.1</span>
+            </h1>
+            <button onclick="clearData()" class="text-xs text-indigo-200 hover:text-white underline">データ初期化</button>
+        </header>
+
+        <nav class="flex border-b border-gray-200 bg-gray-50 text-sm sm:text-base">
+            <button onclick="navigate('input')" id="nav-input" class="nav-button flex-1 py-4 font-bold transition-colors">1. 地点・基点</button>
+            <button onclick="navigate('selection')" id="nav-selection" class="nav-button flex-1 py-4 font-bold transition-colors">2. ルート選択</button>
+            <button onclick="navigate('shiori')" id="nav-shiori" class="nav-button flex-1 py-4 font-bold transition-colors">3. 旅のしおり</button>
+        </nav>
+
+        <main id="app-content" class="p-4 sm:p-8 min-h-[500px]">
+            </main>
+
+        <div id="message-container" class="fixed bottom-4 right-4 z-50 w-full max-w-sm px-4"></div>
+    </div>
+
+    <datalist id="saved-locations-list"></datalist>
+
+    <script>
+        // ===============================================
+        // 1. 状態管理 (State & Logic)
+        // ===============================================
+        const APP_VERSION = '2.1'; // バージョン管理用
+
+        const generateDefaultItinerary = () => ({
+            version: APP_VERSION,
+            planName: "新規旅程プラン " + new Date().toLocaleDateString('ja-JP'),
+            baseDateTime: new Date().toISOString().substring(0, 16),
+            roundingMinutes: 0,
+            gatheringMinutes: 10,
+            stops: [
+                { id: 's-start', location: '東京駅', isBaseTime: true, isFixed: true, stayMinutes: 0, stayReason: '', memo: '' },
+                { id: 's-way1', location: '渋谷駅', isBaseTime: false, isFixed: false, stayMinutes: 15, stayReason: 'B班待ち合わせ', memo: '' },
+                { id: 's-way2', location: 'ららぽーと横浜', isBaseTime: false, isFixed: false, stayMinutes: 60, stayReason: '昼食', memo: '〇〇レストラン予約済み' },
+                { id: 's-end', location: '横浜駅', isBaseTime: false, isFixed: true, stayMinutes: 0, stayReason: '', memo: '' }
+            ],
+            segments: [], 
+            currentPage: 'input'
+        });
+
+        // データの読み込みとバージョンの整合性チェック
+        function loadState() {
+            try {
+                const saved = JSON.parse(localStorage.getItem('itineraryState'));
+                // バージョンが違う、またはデータが壊れている場合は初期化
+                if (!saved || saved.version !== APP_VERSION) {
+                    console.log("バージョンが異なるためデータを初期化しました");
+                    return generateDefaultItinerary();
+                }
+                return saved;
+            } catch (e) {
+                return generateDefaultItinerary();
+            }
+        }
+
+        let itinerary = loadState();
+        let savedLocations = JSON.parse(localStorage.getItem('savedLocations')) || ['東京駅', '新宿駅', '横浜中華街'];
+        let dragState = { draggedId: null };
+
+        // 状態保存
+        function saveState() {
+            itinerary.version = APP_VERSION;
+            localStorage.setItem('itineraryState', JSON.stringify(itinerary));
+            localStorage.setItem('savedLocations', JSON.stringify(savedLocations));
+            updateDatalist();
+        }
+        
+        function updateDatalist() {
+            const datalist = document.getElementById('saved-locations-list');
+            datalist.innerHTML = savedLocations.map(loc => `<option value="${loc}">`).join('');
+        }
+
+        function clearData() {
+            if(confirm('全てのデータを削除して初期化しますか？')) {
+                localStorage.removeItem('itineraryState');
+                location.reload();
+            }
+        }
+
+        // ===============================================
+        // 2. 時間計算 & APIモックロジック
+        // ===============================================
+
+        function addMinutesToISO(isoString, minutes) {
+            const date = new Date(isoString);
+            date.setMinutes(date.getMinutes() + minutes);
+            const tzOffset = date.getTimezoneOffset() * 60000; 
+            return (new Date(date - tzOffset)).toISOString().slice(0, 16);
+        }
+
+        function formatDisplayTime(isoString) {
+            if (!isoString) return "--:--";
+            const date = new Date(isoString);
+            return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}分`;
+        }
+
+        function roundMinutes(minutes, rounding) {
+            if (!rounding || rounding === 0) return minutes;
+            const remainder = minutes % rounding;
+            return remainder === 0 ? minutes : minutes + (rounding - remainder);
+        }
+
+        // ★ API代わりのモックデータ生成 (料金情報を詳細化)
+        function getMockRoutes(from, to, mode) {
+            const baseTime = 20 + (from.length + to.length) * 2; 
+            const multiplier = mode === 'walking' ? 4 : mode === 'bicycling' ? 2 : 1;
+            const duration = baseTime * multiplier;
+            
+            const tolls = [];
+            if (mode === 'driving' && Math.random() > 0.3) {
+                tolls.push({ name: '首都高速', standard: 700, kei: 500 });
+                if (Math.random() > 0.5) {
+                    tolls.push({ name: '東名高速', standard: 800, kei: 600 });
+                }
+            }
+
+            return [
+                { id: 'r1', label: '推奨', durationMinutes: duration, tolls: tolls, desc: 'バランス型' },
+                { id: 'r2', label: '最短', durationMinutes: Math.max(5, duration - 10), tolls: [...tolls, {name:'追加区間', standard:300, kei:200}], desc: '急ぎの場合' },
+                { id: 'r3', label: '安価', durationMinutes: duration + 20, tolls: [], desc: '下道優先' }
+            ];
+        }
+
+        // スケジュール計算
+        function calculateAllSchedule() {
+            const baseIndex = itinerary.stops.findIndex(s => s.isBaseTime);
+            if (baseIndex === -1) return false;
+
+            // Forward
+            let currentTime = itinerary.baseDateTime;
+            for (let i = baseIndex; i < itinerary.stops.length; i++) {
+                const stop = itinerary.stops[i];
+                stop.arrivalTime = currentTime;
+                const roundedStay = roundMinutes(stop.stayMinutes, itinerary.roundingMinutes);
+                stop.departureTime = addMinutesToISO(stop.arrivalTime, roundedStay);
+
+                if (i < itinerary.stops.length - 1) {
+                    if (!itinerary.segments[i]) initSegment(i);
+                    const seg = itinerary.segments[i];
+                    let duration = 30;
+                    if (seg.mockRoutes && seg.mockRoutes.length > 0) {
+                        const route = seg.selectedRoute ? seg.mockRoutes.find(r => r.id === seg.selectedRoute) : seg.mockRoutes[0];
+                        duration = route ? route.durationMinutes : 30;
+                        if (!seg.selectedRoute) seg.selectedRoute = route.id;
+                    }
+                    currentTime = addMinutesToISO(stop.departureTime, duration);
+                }
+            }
+
+            // Backward
+            currentTime = itinerary.stops[baseIndex].arrivalTime; 
+            for (let i = baseIndex - 1; i >= 0; i--) {
+                const nextStop = itinerary.stops[i+1];
+                const seg = itinerary.segments[i];
+                if (!seg) initSegment(i);
+
+                let duration = 30;
+                if (seg.mockRoutes && seg.mockRoutes.length > 0) {
+                    const route = seg.selectedRoute ? seg.mockRoutes.find(r => r.id === seg.selectedRoute) : seg.mockRoutes[0];
+                    duration = route ? route.durationMinutes : 30;
+                    if (!seg.selectedRoute) seg.selectedRoute = route.id;
+                }
+
+                const currentDeparture = addMinutesToISO(nextStop.arrivalTime, -duration);
+                itinerary.stops[i].departureTime = currentDeparture;
+                const roundedStay = roundMinutes(itinerary.stops[i].stayMinutes, itinerary.roundingMinutes);
+                itinerary.stops[i].arrivalTime = addMinutesToISO(currentDeparture, -roundedStay);
+            }
+            return true;
+        }
+
+        function initSegment(index) {
+            itinerary.segments[index] = {
+                fromStopId: itinerary.stops[index].id,
+                toStopId: itinerary.stops[index+1].id,
+                travelMode: 'driving', // default
+                selectedRoute: null,
+                mockRoutes: getMockRoutes(itinerary.stops[index].location, itinerary.stops[index+1].location, 'driving')
+            };
+        }
+
+        // ===============================================
+        // 3. UIレンダリング (Pages)
+        // ===============================================
+
+        function navigate(pageId) {
+            try {
+                if (pageId === 'selection' || pageId === 'shiori') {
+                    const success = calculateAllSchedule();
+                    if (!success && itinerary.stops.findIndex(s => s.isBaseTime) === -1) {
+                        showAlert('基点となる日時が設定されていません。', 'error');
+                        return;
+                    }
+                }
+                itinerary.currentPage = pageId;
+                updateNavStyles(pageId);
+                
+                const content = document.getElementById('app-content');
+                if (pageId === 'input') renderInputPage(content);
+                else if (pageId === 'selection') renderSelectionPage(content);
+                else if (pageId === 'shiori') renderShioriPage(content);
+                
+                saveState();
+            } catch (e) {
+                console.error(e);
+                showAlert('エラーが発生しました。右上の「データ初期化」をお試しください。', 'error');
+            }
+        }
+
+        function updateNavStyles(activePage) {
+            document.querySelectorAll('.nav-button').forEach(btn => {
+                if (btn.dataset.page === activePage || btn.id === `nav-${activePage}`) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+
+        // --- Page 1: 入力画面 ---
+        function renderInputPage(container) {
+            if (itinerary.segments.length < itinerary.stops.length - 1) {
+                itinerary.segments = new Array(itinerary.stops.length - 1).fill(null);
+            }
+
+            const gatheringOptions = [
+                {v:5, l:'5分前'}, {v:10, l:'10分前'}, {v:20, l:'20分前'}, 
+                {v:30, l:'30分前'}, {v:40, l:'40分前'}, {v:50, l:'50分前'}, {v:60, l:'60分前'}
+            ];
+
+            container.innerHTML = `
+                <div class="space-y-6 animate-fade-in">
+                    <div class="p-5 bg-indigo-50 rounded-xl border border-indigo-100 grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">基点日時 (Start/Target)</label>
+                            <input type="datetime-local" value="${itinerary.baseDateTime}" 
+                                onchange="itinerary.baseDateTime=this.value; saveState();"
+                                class="w-full p-2 border rounded shadow-sm focus:ring-2 focus:ring-indigo-500 font-bold">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">バッファ (Rounding)</label>
+                            <select onchange="itinerary.roundingMinutes=parseInt(this.value); saveState();" class="w-full p-2 border rounded shadow-sm font-bold">
+                                <option value="0" ${itinerary.roundingMinutes===0?'selected':''}>なし (1分単位)</option>
+                                <option value="5" ${itinerary.roundingMinutes===5?'selected':''}>5分単位</option>
+                                <option value="10" ${itinerary.roundingMinutes===10?'selected':''}>10分単位</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">集合時間設定</label>
+                            <select onchange="itinerary.gatheringMinutes=parseInt(this.value); saveState();" class="w-full p-2 border rounded shadow-sm font-bold">
+                                ${gatheringOptions.map(o => `<option value="${o.v}" ${itinerary.gatheringMinutes===o.v?'selected':''}>${o.l}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="sortable-list" class="space-y-6">
+                        ${itinerary.stops.map((stop, i) => renderStopCard(stop, i)).join('')}
+                    </div>
+
+                    <button onclick="addStop()" class="w-full py-3 bg-white border-2 border-dashed border-gray-300 text-gray-500 font-bold rounded-xl hover:border-indigo-500 hover:text-indigo-500 transition">
+                        + 経由地を追加
+                    </button>
+                    
+                    <div class="h-4"></div>
+                    <button onclick="navigate('selection')" class="w-full py-4 bg-indigo-600 text-white font-bold text-xl rounded-xl shadow-lg hover:bg-indigo-700 transition">
+                        次へ：ルート計算 🚀
+                    </button>
+                </div>
+            `;
+            setupDragAndDrop();
+        }
+
+        function renderStopCard(stop, index) {
+            const isFirst = index === 0;
+            const isLast = index === itinerary.stops.length - 1;
+            
+            return `
+            <div class="draggable-item bg-white p-5 rounded-xl shadow-sm border border-gray-200 relative ${stop.isBaseTime ? 'ring-2 ring-green-500' : ''}" 
+                 data-id="${stop.id}" draggable="${!stop.isFixed}" data-fixed="${stop.isFixed}">
+                
+                <div class="flex items-start justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <span class="bg-gray-800 text-white text-xs font-bold px-2 py-1 rounded">${index + 1}</span>
+                        <span class="font-bold text-lg text-gray-700">${isFirst ? '出発地' : isLast ? '目的地' : '経由地'}</span>
+                        ${stop.isBaseTime ? '<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">ここが時間の基準</span>' : ''}
+                    </div>
+                    <div class="flex items-center gap-2">
+                        ${!stop.isFixed ? `<div class="drag-handle text-gray-400 cursor-move" title="ドラッグで移動">☰</div>` : ''}
+                        ${!stop.isFixed ? `<button onclick="removeStop('${stop.id}')" class="text-gray-400 hover:text-red-500">🗑️</button>` : ''}
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-xs font-bold text-gray-400 mb-1">地点名入力 (施設名/住所)</label>
+                    <div class="flex gap-2">
+                        <input type="text" list="saved-locations-list" value="${stop.location}" onchange="updateLocation('${stop.id}', this.value)" 
+                               class="flex-1 p-2 border rounded focus:ring-2 focus:ring-indigo-500 font-bold" placeholder="例: 東京タワー">
+                        <button onclick="saveLocation('${stop.id}')" class="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-2 rounded text-sm font-bold" title="地名を保存">💾</button>
+                        <button onclick="validateLocation('${stop.id}')" class="bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-2 rounded text-sm font-bold" title="GoogleMapで存在確認">🔍 検証</button>
+                    </div>
+                </div>
+
+                ${!isFirst && !isLast ? `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-400 mb-1">滞在時間設定 (分)</label>
+                        <input type="number" value="${stop.stayMinutes}" onchange="updateStay('${stop.id}', this.value)" 
+                               class="w-full p-2 border rounded text-center font-bold" placeholder="分">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-400 mb-1">滞在理由</label>
+                        <input type="text" value="${stop.stayReason}" onchange="updateReason('${stop.id}', this.value)" 
+                               class="w-full p-2 border rounded" placeholder="例: 昼食">
+                    </div>
+                </div>
+                ` : ''}
+
+                <div class="mb-4">
+                    <label class="block text-xs font-bold text-gray-400 mb-1">メモ (しおりに表示)</label>
+                    <input type="text" value="${stop.memo || ''}" onchange="updateMemo('${stop.id}', this.value)" 
+                           class="w-full p-2 border rounded bg-yellow-50 focus:bg-white transition" placeholder="例: 〇〇レストラン予約済み">
+                </div>
+
+                <div class="flex items-center gap-2 text-sm text-gray-600 mb-4 pb-4 border-b border-gray-100">
+                    <label class="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
+                        <input type="radio" name="baseTimeGroup" ${stop.isBaseTime ? 'checked' : ''} 
+                               onchange="setBaseTimeStop('${stop.id}')" class="text-indigo-600">
+                        <span>この時間を固定(基点)にする</span>
+                    </label>
+                </div>
+
+                ${!isLast ? renderTravelModeSelection(index) : ''}
+            </div>`;
+        }
+
+        function renderTravelModeSelection(index) {
+            if (!itinerary.segments[index]) initSegment(index);
+            const seg = itinerary.segments[index];
+            const modes = [
+                { id: 'driving', icon: '🚗', label: '車移動' },
+                { id: 'walking', icon: '🚶', label: '徒歩移動' },
+                { id: 'bicycling', icon: '🚴', label: '自転車移動' }
+            ];
+
+            return `
+            <div>
+                <label class="block text-xs font-bold text-gray-400 mb-1 text-center">次の地点への移動手段</label>
+                <div class="flex justify-center gap-2">
+                    ${modes.map(m => `
+                        <button onclick="updateMode(${index}, '${m.id}')" 
+                                class="flex items-center gap-1 px-3 py-2 rounded border text-sm transition-colors
+                                ${seg.travelMode === m.id ? 'bg-indigo-100 border-indigo-500 text-indigo-700 font-bold' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'}">
+                            ${m.icon} ${m.label}
+                        </button>
+                    `).join('')}
+                </div>
+            </div>`;
+        }
+
+        // --- Page 2: ルート選択画面 ---
+        function renderSelectionPage(container) {
+            container.innerHTML = `
+                <h2 class="text-xl font-bold mb-4 text-gray-800">経路の選択</h2>
+                <div class="space-y-8">
+                    ${itinerary.segments.map((seg, i) => {
+                        if (!seg.mockRoutes) seg.mockRoutes = getMockRoutes(itinerary.stops[i].location, itinerary.stops[i+1].location, seg.travelMode);
+                        
+                        const modeLabel = seg.travelMode === 'driving' ? '車' : seg.travelMode === 'walking' ? '徒歩' : '自転車';
+                        const modeIcon = seg.travelMode === 'driving' ? '🚗' : seg.travelMode === 'walking' ? '🚶' : '🚴';
+
+                        return `
+                        <div class="bg-white p-5 rounded-xl shadow-md border border-gray-200">
+                            <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-100">
+                                <div class="text-sm font-bold text-gray-600 flex items-center gap-2">
+                                    <span class="bg-indigo-600 text-white px-2 py-1 rounded">区間 ${i+1}</span>
+                                    <span>${itinerary.stops[i].location}</span>
+                                    <span>→</span>
+                                    <span>${itinerary.stops[i+1].location}</span>
+                                </div>
+                                <div class="text-sm font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded border border-indigo-100">
+                                    ${modeIcon} ${modeLabel}
+                                </div>
+                            </div>
+
+                            <div class="space-y-2 mb-4">
+                                ${seg.mockRoutes.map(route => `
+                                    <label class="flex items-center justify-between p-3 border rounded-lg cursor-pointer hover:bg-indigo-50 transition ${seg.selectedRoute === route.id ? 'border-indigo-500 ring-1 ring-indigo-500 bg-indigo-50' : ''}">
+                                        <div class="flex items-center gap-3">
+                                            <input type="radio" name="route-seg-${i}" value="${route.id}" 
+                                                   ${seg.selectedRoute === route.id ? 'checked' : ''} 
+                                                   onchange="selectRoute(${i}, '${route.id}')" class="text-indigo-600">
+                                            <div>
+                                                <div class="font-bold text-gray-800">${route.label} <span class="text-xs font-normal text-gray-500">(${route.desc})</span></div>
+                                                <div class="text-xs text-gray-500">
+                                                    ${(route.tolls || []).length > 0 ? `<span class="text-red-500">有料: ${(route.tolls || []).length}区間</span>` : '無料'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="text-lg font-bold text-gray-700">${route.durationMinutes}分</div>
+                                    </label>
+                                `).join('')}
+                            </div>
+                            
+                            <div class="border border-gray-200 rounded-lg overflow-hidden">
+                                <button onclick="toggleMap('map-${i}')" class="w-full bg-gray-50 p-2 text-xs font-bold text-gray-500 hover:bg-gray-100 flex justify-center items-center gap-1">
+                                    🗺️ 地図を表示/非表示 (候補ルートを表示予定)
+                                </button>
+                                <div id="map-${i}" class="map-container bg-gray-200 flex items-center justify-center text-gray-400 font-bold">
+                                    <div class="p-10">Google Map Placeholder<br>(API連携時にここにルートを表示)</div>
+                                </div>
+                            </div>
+                        </div>
+                        `;
+                    }).join('')}
+                </div>
+                <div class="h-8"></div>
+                <button onclick="navigate('shiori')" class="w-full py-4 bg-green-600 text-white font-bold text-xl rounded-xl shadow-lg hover:bg-green-700 transition">
+                    旅のしおりを作成する ✨
+                </button>
+            `;
+        }
+
+        function toggleMap(id) {
+            const el = document.getElementById(id);
+            el.classList.toggle('open');
+        }
+
+        // --- Page 3: 旅のしおり (確定画面) ---
+        function renderShioriPage(container) {
+            calculateAllSchedule();
+
+            const events = [];
+            let eventCounter = 1;
+
+            itinerary.stops.forEach((stop, i) => {
+                const isFirst = (i === 0);
+                const isLast = (i === itinerary.stops.length - 1);
+                
+                if (isFirst) {
+                    const gatherTime = addMinutesToISO(stop.departureTime, -itinerary.gatheringMinutes);
+                    events.push({
+                        idx: eventCounter++,
+                        text: `${stop.location}　${formatDisplayTime(gatherTime)}　集合`
+                    });
+                    
+                    events.push({
+                        idx: eventCounter++,
+                        text: `${stop.location}　${formatDisplayTime(stop.departureTime)}　出発`
+                    });
+                } else {
+                    events.push({
+                        idx: eventCounter++,
+                        text: `${stop.location}　${formatDisplayTime(stop.arrivalTime)}　到着`
+                    });
+
+                    if (!isLast) {
+                        const memoText = stop.memo ? `　${stop.memo}` : '';
+                        events.push({
+                            idx: eventCounter++,
+                            text: `${stop.location}　${stop.stayReason || '滞在'}　（滞在時間　${stop.stayMinutes}分）${memoText}`
+                        });
+                        
+                        events.push({
+                            idx: eventCounter++,
+                            text: `${stop.location}　${formatDisplayTime(stop.departureTime)}　出発`
+                        });
+                    }
+                }
+
+                if (!isLast) {
+                    const seg = itinerary.segments[i];
+                    const route = seg.selectedRoute ? seg.mockRoutes.find(r => r.id === seg.selectedRoute) : seg.mockRoutes[0];
+                    const duration = route ? route.durationMinutes : 30;
+                    
+                    const modeText = seg.travelMode === 'driving' ? '車移動' : seg.travelMode === 'walking' ? '徒歩移動' : '自転車移動';
+                    
+                    let costText = '';
+                    const tolls = route ? (route.tolls || []) : [];
+                    if (tolls.length > 0) {
+                        const tollsStr = tolls.map((t, idx) => {
+                            const prefix = tolls.length > 1 ? `料金${idx+1}` : '料金';
+                            const name = t.name ? `→${tolls.length > 1 ? '①':''}${t.name}` : ''; 
+                            return `${prefix}${name}　${t.standard}円（軽${t.kei}円）`;
+                        }).join('　');
+                        costText = `　有料道路${tollsStr}`;
+                    }
+
+                    events.push({
+                        idx: eventCounter++,
+                        text: `${modeText}　${duration}分${costText}`
+                    });
+                }
+            });
+
+            const rowsHtml = events.map(e => `
+                <div class="shiori-row">
+                    <div class="shiori-num">${e.idx.toString().padStart(2, '0')}.</div>
+                    <div class="shiori-content">${e.text}</div>
+                </div>
+            `).join('');
+
+            container.innerHTML = `
+                <div class="bg-white p-8 rounded-xl shadow-lg border border-gray-100 max-w-3xl mx-auto">
+                    <h2 class="text-3xl font-extrabold text-center mb-2 text-indigo-900">${itinerary.planName}</h2>
+                    <p class="text-center text-gray-500 text-sm mb-10 border-b pb-4">旅のしおり</p>
+                    
+                    <div class="font-mono text-base md:text-lg leading-relaxed">
+                        ${rowsHtml}
+                    </div>
+                </div>
+                
+                <div class="h-8"></div>
+                <div class="flex gap-4">
+                    <button onclick="navigate('input')" class="flex-1 py-3 bg-gray-500 text-white font-bold rounded-xl hover:bg-gray-600 transition">
+                        修正に戻る
+                    </button>
+                    <button onclick="window.print()" class="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition">
+                        🖨️ 印刷 / PDF保存
+                    </button>
+                </div>
+            `;
+        }
+
+        // ===============================================
+        // 4. イベントハンドラ & ヘルパー
+        // ===============================================
+
+        function addStop() {
+            const newStop = { 
+                id: 's-' + Math.random().toString(36).substr(2, 9), 
+                location: '', isBaseTime: false, isFixed: false, stayMinutes: 30, stayReason: '', memo: ''
+            };
+            itinerary.stops.splice(itinerary.stops.length - 1, 0, newStop);
+            itinerary.segments.push(null);
+            saveState();
+            renderInputPage(document.getElementById('app-content'));
+        }
+
+        function removeStop(id) {
+            itinerary.stops = itinerary.stops.filter(s => s.id !== id);
+            saveState();
+            renderInputPage(document.getElementById('app-content'));
+        }
+
+        function updateLocation(id, val) { itinerary.stops.find(s => s.id === id).location = val; saveState(); }
+        function updateStay(id, val) { itinerary.stops.find(s => s.id === id).stayMinutes = parseInt(val)||0; saveState(); }
+        function updateReason(id, val) { itinerary.stops.find(s => s.id === id).stayReason = val; saveState(); }
+        function updateMemo(id, val) { itinerary.stops.find(s => s.id === id).memo = val; saveState(); }
+        
+        function setBaseTimeStop(id) {
+            itinerary.stops.forEach(s => s.isBaseTime = (s.id === id));
+            saveState();
+            renderInputPage(document.getElementById('app-content'));
+        }
+        function updateMode(index, mode) {
+            if(!itinerary.segments[index]) initSegment(index);
+            itinerary.segments[index].travelMode = mode;
+            saveState();
+            renderInputPage(document.getElementById('app-content'));
+        }
+        function selectRoute(segIndex, routeId) {
+            itinerary.segments[segIndex].selectedRoute = routeId;
+            saveState();
+            renderSelectionPage(document.getElementById('app-content'));
+        }
+
+        function saveLocation(id) {
+            const val = itinerary.stops.find(s => s.id === id).location;
+            if(val && !savedLocations.includes(val)){
+                savedLocations.push(val);
+                saveState();
+                showAlert(`「${val}」を保存しました`, 'success');
+            }
+        }
+        
+        function validateLocation(id) {
+            const val = itinerary.stops.find(s => s.id === id).location;
+            if(!val) return;
+            showAlert('GoogleMapで検索中...', 'info');
+            setTimeout(() => {
+                showAlert(`OK: 「${val}」が見つかりました (Mock)`, 'success');
+            }, 1000);
+        }
+
+        function showAlert(msg, type='info') {
+            const el = document.getElementById('message-container');
+            const color = type === 'error' ? 'bg-red-500' : type === 'success' ? 'bg-green-600' : 'bg-indigo-600';
+            el.innerHTML = `<div class="${color} text-white px-6 py-3 rounded-full shadow-lg text-center animate-bounce font-bold text-sm">${msg}</div>`;
+            setTimeout(() => el.innerHTML = '', 3000);
+        }
+
+        function setupDragAndDrop() {
+            const list = document.getElementById('sortable-list');
+            let draggedItem = null;
+            list.addEventListener('dragstart', e => {
+                if(e.target.dataset.fixed === 'true') { e.preventDefault(); return; }
+                draggedItem = e.target;
+                e.target.classList.add('dragging');
+            });
+            list.addEventListener('dragend', e => {
+                e.target.classList.remove('dragging');
+                draggedItem = null;
+            });
+            list.addEventListener('dragover', e => {
+                e.preventDefault();
+                const afterElement = getDragAfterElement(list, e.clientY);
+                if (afterElement && afterElement.dataset.fixed !== 'true') {
+                     list.insertBefore(draggedItem, afterElement);
+                }
+            });
+        }
+        function getDragAfterElement(container, y) {
+            const draggableElements = [...container.querySelectorAll('.draggable-item:not(.dragging)')];
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) return { offset: offset, element: child };
+                else return closest;
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+
+        updateDatalist();
+        navigate('input');
+    </script>
+</body>
+</html>
