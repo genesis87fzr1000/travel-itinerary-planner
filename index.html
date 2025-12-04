@@ -698,6 +698,84 @@
             renderRoutePage(segIndex); 
         }
 
+        /**
+ * 3. 旅程概要画面の描画
+ * @param {HTMLElement} appContent - アプリケーションのメインコンテナ
+ */
+function renderSummaryPage(appContent) {
+    const { stops, segments } = itinerary;
+
+    let html = `
+        <h2 class="text-xl font-bold mb-6 text-indigo-700">3. 旅程概要</h2>
+        <div class="space-y-6">
+    `;
+
+    let totalDuration = 0;
+    let totalTollCost = 0;
+    let totalKeiCost = 0;
+    let tollCount = 0;
+
+    // 各セグメントの情報を表示
+    segments.forEach((segment, index) => {
+        const startStop = stops[index];
+        const endStop = stops[index + 1];
+        const selectedRoute = segment.mockRoutes.find(r => r.id === segment.selectedRoute);
+        
+        // 選択されたルートの情報を集計
+        let durationText = 'ルート未選択';
+        let costText = '';
+
+        if (selectedRoute) {
+            totalDuration += selectedRoute.durationMinutes;
+            durationText = `${selectedRoute.durationMinutes} 分 (${selectedRoute.desc})`;
+            
+            if (selectedRoute.tolls && selectedRoute.tolls.length > 0) {
+                totalTollCost += selectedRoute.tolls[0].standard;
+                totalKeiCost += selectedRoute.tolls[0].kei;
+                tollCount++;
+                costText = `<span class="text-red-600 font-bold">有料: ¥${selectedRoute.tolls[0].standard.toLocaleString()}</span>`;
+            } else {
+                costText = `<span class="text-green-600 font-bold">無料</span>`;
+            }
+        }
+        
+        html += `
+            <div class="p-4 bg-white rounded-xl shadow-md border border-gray-200">
+                <p class="font-semibold text-gray-800">${index + 1}. ${startStop.location} → ${endStop.location}</p>
+                <div class="ml-4 mt-2 text-sm space-y-1">
+                    <p>移動手段: <span class="text-indigo-600">${getTravelModeLabel(segment.travelMode)}</span></p>
+                    <p>所要時間: <span class="font-bold">${durationText}</span></p>
+                    <p>費用: ${costText}</p>
+                </div>
+                <button onclick="renderRoutePage(${index})" class="mt-2 text-xs text-indigo-500 hover:text-indigo-700">ルートを再選択</button>
+            </div>
+        `;
+    });
+
+    // 総合計の表示
+    html += `
+        </div>
+        <div class="mt-8 p-6 bg-indigo-50 rounded-xl border border-indigo-200">
+            <h3 class="text-xl font-bold text-indigo-700 mb-4">✨ 旅程の合計概要</h3>
+            <div class="space-y-2 text-gray-700">
+                <p>総移動時間: <span class="font-bold text-2xl">${Math.floor(totalDuration / 60)}時間 ${totalDuration % 60}分</span></p>
+                ${segments.some(s => s.travelMode === 'DRIVING') ? `
+                    <p>高速道路/有料道路 (普通車): <span class="font-bold text-lg text-red-600">¥${totalTollCost.toLocaleString()}</span></p>
+                    <p>高速道路/有料道路 (軽自動車): <span class="font-bold text-lg text-red-600">¥${totalKeiCost.toLocaleString()}</span></p>
+                ` : ''}
+            </div>
+        </div>
+        
+        <div class="mt-6 flex justify-end space-x-3">
+            <button onclick="renderInputPage(document.getElementById('app-content'))" class="text-sm px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors">
+                1. 入力画面に戻る
+            </button>
+        </div>
+    `;
+
+    appContent.innerHTML = html;
+}
+
         function saveLocation(id) {
             const val = itinerary.stops.find(s => s.id === id).location;
             if(val && !savedLocations.includes(val)){
