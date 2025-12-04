@@ -769,6 +769,91 @@
 
         updateDatalist();
         navigate('input');
+
+        // ★★★ 新規追加: 地図表示とルート描画
+let mapInstances = {}; // マップインスタンスをセグメントごとに保持
+
+function initMapDisplay(segIndex, routeId) {
+    const segment = itinerary.segments[segIndex];
+    const mapElement = document.getElementById(`map-area-${segIndex}`); // 地図を表示するDIV要素
+    
+    if (!mapElement) {
+        console.error(`Map container not found for segment ${segIndex}`);
+        return; 
+    }
+    
+    // 地点データがない場合は処理を中断
+    if (!segment.mockRoutes || segment.mockRoutes.length === 0) {
+        mapElement.innerHTML = '<p class="p-4 text-center text-gray-500">ルート情報がありません。</p>';
+        return;
+    }
+
+    // Directions ServiceとRendererのインスタンスを作成
+    const directionsService = new google.maps.DirectionsService();
+    // 既存のマップインスタンスがあれば再利用し、Rendererを更新
+    const directionsRenderer = new google.maps.DirectionsRenderer({
+        map: mapInstances[segIndex], 
+        suppressMarkers: false, 
+        polylineOptions: { 
+            strokeColor: '#4F46E5', // インディゴカラー
+            strokeWeight: 5 
+        }
+    });
+
+    // マップがまだ初期化されていない場合のみ、新しくマップを作成
+    if (!mapInstances[segIndex]) {
+        // マップを初期化 
+        const defaultCenter = { lat: 35.681236, lng: 139.767125 }; // 東京駅付近を中心とする
+        
+        const map = new google.maps.Map(mapElement, {
+            zoom: 10,
+            center: defaultCenter,
+            mapTypeControl: false,
+            streetViewControl: false,
+            fullscreenControl: false
+        });
+        mapInstances[segIndex] = map; // インスタンスを保存
+        directionsRenderer.setMap(map); // Rendererにマップをセット
+    }
+    
+    // 選択されたルートの描画
+    const selectedRoute = segment.mockRoutes.find(r => r.id === routeId);
+    if (!selectedRoute) return;
+
+    // Directions APIに再度リクエストを送り、選択されたルートを描画
+    directionsService.route(
+        {
+            origin: itinerary.stops[segIndex].location,
+            destination: itinerary.stops[segIndex+1].location,
+            travelMode: segment.travelMode.toUpperCase(),
+            provideRouteAlternatives: true,
+            // 描画には、ルート候補全体ではなく、選択されたルートの情報が必要です
+        },
+        (response, status) => {
+            if (status === google.maps.DirectionsStatus.OK) {
+                // mockRoutesのdesc (Summary)とresponseのルートのsummaryが一致するものを探す
+                const targetRouteIndex = response.routes.findIndex(r => r.summary === selectedRoute.desc);
+
+                if (targetRouteIndex !== -1) {
+                    // responseから該当ルートを選択して描画
+                    directionsRenderer.setDirections({
+                        routes: [response.routes[targetRouteIndex]],
+                        status: google.maps.DirectionsStatus.OK
+                    });
+                    // 地図の表示範囲をルートに合わせて調整
+                    directionsRenderer.getMap().fitBounds(response.routes[targetRouteIndex].bounds);
+
+                } else {
+                    // 見つからない場合は全体のルートを描画 (フォールバック)
+                    directionsRenderer.setDirections(response);
+                }
+            } else {
+                console.error('Directions API Route Draw Error:', status);
+            }
+        }
+    );
+}
     </script>
 </body>
 </html>
+
