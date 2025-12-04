@@ -688,10 +688,14 @@
                     showAlert(`ルート取得エラー: ${error}`, 'error');
                 });
         }
+        // ★★★ 置き換え: ルート選択が変更されたときに地図を更新する関数
         function selectRoute(segIndex, routeId) {
             itinerary.segments[segIndex].selectedRoute = routeId;
             saveState();
-            renderSelectionPage(document.getElementById('app-content'));
+            // 地図を更新
+            initMapDisplay(segIndex, routeId);
+            // 現在のルート選択画面を再描画して、選択状態を更新する
+            renderRoutePage(segIndex); 
         }
 
         function saveLocation(id) {
@@ -856,4 +860,3 @@ function initMapDisplay(segIndex, routeId) {
     </script>
 </body>
 </html>
-
