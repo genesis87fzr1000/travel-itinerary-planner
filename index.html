@@ -84,10 +84,9 @@
         // ===============================================
         const APP_VERSION = '2.2'; // バージョンを2.2に更新
 
-        // ★★★ 修正箇所: Google Maps API読み込み後に呼ばれる関数
+        // ★★★ ここが一番最初であるべき
         function initMap() {
-        // APIが正常に読み込まれたことの確認用。
-        console.log("Google Maps API Loaded successfully.");
+            console.log("Google Maps API Loaded successfully.");
         }
     
         const generateDefaultItinerary = () => ({
@@ -773,4 +772,3 @@
     </script>
 </body>
 </html>
-
