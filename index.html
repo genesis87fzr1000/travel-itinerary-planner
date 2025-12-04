@@ -189,6 +189,61 @@
             ];
         }
 
+        // ★★★ Directions APIを使った実際のルート計算 (新規追加)
+        function getRealRoutes(fromStop, toStop, segIndex, mode) {
+            const directionsService = new google.maps.DirectionsService();
+
+            return new Promise((resolve, reject) => {
+                directionsService.route(
+                    {
+                        origin: fromStop.location,
+                        destination: toStop.location,
+                        travelMode: mode.toUpperCase(), // 'driving', 'walking', 'bicycling'
+                        provideRouteAlternatives: true // 複数のルート候補を取得
+                    },
+                    (response, status) => {
+                        if (status === google.maps.DirectionsStatus.OK) {
+                            const newRoutes = response.routes.slice(0, 3).map((route, i) => {
+                                // ルートごとの情報を抽出
+                                const leg = route.legs[0];
+                                const durationMinutes = Math.ceil(leg.duration.value / 60);
+                                
+                                // 有料道路情報 (簡易的なモックを併用)
+                                const tolls = [];
+                                if (route.fare && route.fare.value > 0) {
+                                    tolls.push({ 
+                                        name: '推定料金', 
+                                        standard: Math.ceil(route.fare.value), 
+                                        kei: Math.ceil(route.fare.value * 0.8) 
+                                    });
+                                } else if (mode === 'driving' && route.warnings.some(w => w.includes('toll'))) {
+                                    // Directions APIが直接料金を返さない場合の警告を料金と見なす
+                                     tolls.push({ name: '有料区間あり', standard: 1000, kei: 700 });
+                                }
+
+                                return {
+                                    id: `r${i + 1}`,
+                                    label: `候補 ${i + 1}`,
+                                    durationMinutes: durationMinutes,
+                                    tolls: tolls,
+                                    desc: route.summary || '最適なルート'
+                                };
+                            });
+
+                            itinerary.segments[segIndex].mockRoutes = newRoutes;
+                            itinerary.segments[segIndex].selectedRoute = newRoutes.length > 0 ? newRoutes[0].id : null;
+                            resolve();
+
+                        } else {
+                            itinerary.segments[segIndex].mockRoutes = [];
+                            itinerary.segments[segIndex].selectedRoute = null;
+                            reject(`Google Directions Status: ${status}`);
+                        }
+                    }
+                );
+            });
+        }
+
         // スケジュール計算
         function calculateAllSchedule() {
             const baseIndex = itinerary.stops.findIndex(s => s.isBaseTime);
@@ -623,8 +678,16 @@
         function updateMode(index, mode) {
             if(!itinerary.segments[index]) initSegment(index);
             itinerary.segments[index].travelMode = mode;
-            saveState();
-            renderInputPage(document.getElementById('app-content'));
+            
+            // ルートを再計算し、新しいモックルートを上書き
+            getRealRoutes(itinerary.stops[index], itinerary.stops[index+1], index, mode)
+                .then(() => {
+                    saveState();
+                    renderInputPage(document.getElementById('app-content'));
+                })
+                .catch(error => {
+                    showAlert(`ルート取得エラー: ${error}`, 'error');
+                });
         }
         function selectRoute(segIndex, routeId) {
             itinerary.segments[segIndex].selectedRoute = routeId;
@@ -642,12 +705,30 @@
         }
         
         function validateLocation(id) {
-            const val = itinerary.stops.find(s => s.id === id).location;
-            if(!val) return;
-            showAlert('GoogleMapで検索中...', 'info');
-            setTimeout(() => {
-                showAlert(`OK: 「${val}」が見つかりました (Mock)`, 'success');
-            }, 1000);
+            const stop = itinerary.stops.find(s => s.id === id);
+            const location = stop.location;
+            if(!location) {
+                showAlert('地点名が入力されていません。', 'error');
+                return;
+            }
+
+            showAlert(`「${location}」をGoogleで検証中...`, 'info');
+
+            // ★★★ Places API (AutocompleteService) を利用して地点を検証
+            const service = new google.maps.places.AutocompleteService();
+            service.getPlacePredictions({ input: location }, (predictions, status) => {
+                if (status === google.maps.places.PlacesServiceStatus.OK && predictions.length > 0) {
+                    // 候補が見つかった場合
+                    showAlert(`✅ OK: 「${predictions[0].description}」を確認しました。`, 'success');
+                    // 地点名が見つかったものに更新
+                    stop.location = predictions[0].description;
+                    saveState(); 
+                    renderInputPage(document.getElementById('app-content'));
+                } else {
+                    // 候補が見つからない、またはエラーの場合
+                    showAlert(`❌ エラー: 「${location}」は正確に特定できませんでした。住所や施設名を修正してください。`, 'error');
+                }
+            });
         }
 
         function showAlert(msg, type='info') {
