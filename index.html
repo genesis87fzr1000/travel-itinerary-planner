@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>旅程プランナー (v10.0)</title>
+    <title>旅程プランナー (v12.0)</title>
+    
+    <meta name="robots" content="noindex, nofollow">
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
@@ -48,9 +51,13 @@
 
         <header class="p-4 sm:p-6 bg-indigo-700 text-white shadow-md flex justify-between items-center no-print">
             <h1 onclick="navigate('dashboard')" class="text-xl sm:text-2xl font-extrabold flex items-center gap-2 cursor-pointer hover:opacity-80">
-                <span>🗺️</span> 旅程プランナー <span class="text-xs bg-indigo-500 px-2 py-1 rounded-full">v10.0</span>
+                <span>🗺️</span> 旅程プランナー <span class="text-xs bg-indigo-500 px-2 py-1 rounded-full">v12.0</span>
             </h1>
-            <div class="flex gap-4 text-xs sm:text-sm">
+            <div class="flex gap-2 sm:gap-4 text-xs sm:text-sm items-center">
+                <a id="feedback-link" href="#" target="_blank" class="bg-white text-indigo-700 px-3 py-1 rounded-full font-bold hover:bg-gray-100 transition flex items-center gap-1">
+                    💬 <span class="hidden sm:inline">ご意見・ご感想</span>
+                </a>
+                <div class="h-6 w-px bg-indigo-400 mx-1"></div>
                 <button onclick="navigate('dashboard')" class="text-indigo-100 hover:text-white font-bold flex items-center gap-1">
                     🏠 マイページ
                 </button>
@@ -72,13 +79,33 @@
     <datalist id="saved-locations-list"></datalist>
 
     <script>
-        // --- 0. 初期化 ---
-        function initMap() { console.log("Maps API Loaded"); }
-        const APP_VERSION = '10.0';
-
-        // --- 1. データ管理 (複数プラン対応) ---
+        // --- 0. 初期化設定 ---
         
-        // デフォルトプラン生成
+        // ★★★ フィードバック用URL (Googleフォーム等のURLに書き換えてください) ★★★
+        const FEEDBACK_URL = "https://forms.gle/xqzpM5jmdgSMeZSB9"; 
+        // ★★★ 書き換えここまで ★★★
+
+        function initMap() { console.log("Maps API Loaded"); }
+        const APP_VERSION = '12.0';
+
+        // 初期化実行
+        window.onload = function() {
+            // フィードバックリンクの設定
+            const fbLink = document.getElementById('feedback-link');
+            if(fbLink) fbLink.href = FEEDBACK_URL;
+
+            // データ移行と初期表示
+            migrateData();
+            renderDashboard();
+            updateDatalist();
+        }
+
+        // --- 1. データ管理 ---
+        let planList = JSON.parse(localStorage.getItem('planList')) || [];
+        let savedLocations = JSON.parse(localStorage.getItem('savedLocations')) || [];
+        let currentPlan = null;
+        let mapInstances = {};
+
         const generateDefaultItinerary = () => ({
             id: 'plan_' + Date.now(),
             version: APP_VERSION,
@@ -96,13 +123,6 @@
             currentPage: 'input'
         });
 
-        // データ読み込み
-        let planList = JSON.parse(localStorage.getItem('planList')) || [];
-        let savedLocations = JSON.parse(localStorage.getItem('savedLocations')) || [];
-        let currentPlan = null;
-        let mapInstances = {};
-
-        // v9.0からのデータ移行処理 (前回からの変更なし)
         function migrateData() {
             const oldState = localStorage.getItem('itineraryState');
             if (oldState && planList.length === 0) {
@@ -112,12 +132,10 @@
                     parsed.updatedAt = new Date().toISOString();
                     planList.push(parsed);
                     localStorage.setItem('planList', JSON.stringify(planList));
-                } catch(e) { console.error("Migration failed", e); }
+                } catch(e) {}
             }
         }
-        migrateData();
 
-        // プラン操作 (前回からの変更なし)
         function createNewPlan() {
             const newPlan = generateDefaultItinerary();
             planList.unshift(newPlan);
@@ -132,7 +150,7 @@
         }
 
         function deletePlan(id) {
-            if(!confirm('このプランを削除しますか？\n復元はできません。')) return;
+            if(!confirm('削除しますか？')) return;
             planList = planList.filter(p => p.id !== id);
             saveAllPlans();
             renderDashboard();
@@ -164,16 +182,16 @@
             localStorage.setItem('savedLocations', JSON.stringify(savedLocations));
         }
 
-        // --- 2. ユーティリティ & 計算 ---
+        // --- 2. ユーティリティ ---
         function addMinutes(iso, m) { const d=new Date(iso); d.setMinutes(d.getMinutes()+m); const tz=d.getTimezoneOffset()*60000; return (new Date(d-tz)).toISOString().slice(0,16); }
         function formatTime(iso) { if(!iso) return "--:--"; const d=new Date(iso); return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`; }
-        function formatDate(iso) { if(!iso) return ""; const d=new Date(iso); return d.toLocaleDateString() + ' ' + d.getHours() + ':' + String(d.getMinutes()).padStart(2,'0'); }
+        function formatDate(iso) { if(!iso) return ""; const d=new Date(iso); return d.toLocaleDateString(); }
         function getModeLabel(m) { const l={'DRIVING':'車','WALKING':'徒歩','BICYCLING':'自転車','TRANSIT':'電車'}; return l[m]||'車'; }
         function stripHtml(html) { let tmp=document.createElement("DIV"); tmp.innerHTML=html; return tmp.textContent||tmp.innerText||""; }
         function ceilTime(iso, unit) { if(!unit||unit===0) return iso; const d=new Date(iso); const m=d.getMinutes(); const r=m%unit; if(r===0)return iso; d.setMinutes(m+(unit-r)); d.setSeconds(0); const tz=d.getTimezoneOffset()*60000; return (new Date(d-tz)).toISOString().slice(0,16); }
         function floorTime(iso, unit) { if(!unit||unit===0) return iso; const d=new Date(iso); const m=d.getMinutes(); const r=m%unit; if(r===0)return iso; d.setMinutes(m-r); d.setSeconds(0); const tz=d.getTimezoneOffset()*60000; return (new Date(d-tz)).toISOString().slice(0,16); }
 
-        // --- 3. Google API (変更なし) ---
+        // --- 3. Google API ---
         function validateLocation(id) {
             const stop = currentPlan.stops.find(s=>s.id===id);
             if(!stop.name) return showAlert('地点名を入力してください','error');
@@ -182,18 +200,16 @@
                 if (status === 'OK' && preds.length > 0) {
                     stop.location = preds[0].description;
                     saveState(); renderInputPage();
-                    showAlert(`✅ 住所確定: ${stop.name} の検索用住所を登録しました`, 'success');
+                    showAlert(`✅ 住所確定: ${stop.name}`, 'success');
                 } else {
-                    // 検証失敗時はlocationをリセットし、再検証を促す
                     stop.location = ''; 
                     saveState(); renderInputPage();
-                    showAlert('適切な住所が見つかりませんでした。入力内容を確認してください。', 'error');
+                    showAlert('住所が見つかりませんでした。', 'error');
                 }
             });
         }
-        // ... (fetchRealRoutesなど他のAPI関数は省略)
+        
         async function fetchRealRoutes(index) {
-            // ... (前回と同じコード)
             const seg = currentPlan.segments[index];
             const start = currentPlan.stops[index].location;
             const end = currentPlan.stops[index+1].location;
@@ -232,19 +248,16 @@
                 });
             });
         }
-        // ...
 
         // --- 4. 画面描画 ---
         function navigate(page) {
             const nav = document.getElementById('editor-nav');
-            
             if (page === 'dashboard') {
                 currentPlan = null;
                 nav.classList.add('hidden');
                 renderDashboard();
                 return;
             }
-
             if (!currentPlan) return navigate('dashboard');
             
             currentPlan.currentPage = page;
@@ -264,37 +277,20 @@
             else if(page === 'shiori') renderSummaryPage();
         }
 
-        // ★ 新規: 全地点の検証状態を確認し、エラーならアラートを出す
         function validateAndNavigate(targetPage) {
-            // 1. input以外のページへの遷移は、inputからのみ許可
-            if (targetPage !== 'input' && currentPlan.currentPage !== 'input') {
-                // すでにルート選択以降にいる場合は、特にチェックせずに進める（編集フロー内で自由に戻れるように）
-                return navigate(targetPage);
-            }
-            
-            // 2. 地点検証チェック (currentPageが'input'の場合)
+            if (targetPage !== 'input' && currentPlan.currentPage !== 'input') return navigate(targetPage);
             const unvalidatedStops = currentPlan.stops.filter(s => !s.location || s.location.trim() === '');
-            
             if (unvalidatedStops.length > 0) {
                 const names = unvalidatedStops.map(s => s.name || '地点');
-                showAlert(`⚠️ 【${names.join(', ')}】の住所が未確定です。\n各地点の「住所確定」ボタンを押してから進んでください。`, 'error');
-                
-                // 次のページへの遷移をブロック
-                // ルート選択、しおりのナビゲーションボタンが押された場合、input画面に戻る
-                if (targetPage !== 'input') {
-                    navigate('input');
-                    // 確定が必要な地点の入力フィールドにフォーカスを当てたいが、複雑になるので、とりあえずアラートと画面戻しのみ
-                }
+                showAlert(`⚠️ 【${names.join(', ')}】の住所が未確定です。\n各地点の「住所確定」ボタンを押してください。`, 'error');
+                if (targetPage !== 'input') navigate('input');
                 return;
             }
-
-            // 3. 検証OKなら次へ
             navigate(targetPage);
         }
 
-        // ■ 0. ダッシュボード (前回からの変更なし)
+        // ■ 0. ダッシュボード
         function renderDashboard() {
-            // ... (前回と同じコード)
             const el = document.getElementById('app-content');
             let plansHtml = '';
             if (planList.length === 0) {
@@ -307,16 +303,15 @@
                         <div class="bg-white p-6 rounded-xl shadow border border-gray-100 card-hover flex flex-col justify-between h-full">
                             <div>
                                 <h3 class="font-bold text-xl text-indigo-800 mb-2 truncate">${p.planName || '無題のプラン'}</h3>
-                                <p class="text-xs text-gray-400 mb-4">最終更新: ${formatDate(p.updatedAt)}</p>
+                                <p class="text-xs text-gray-400 mb-4">更新: ${formatDate(p.updatedAt)}</p>
                                 <div class="text-sm text-gray-600 mb-4 bg-gray-50 p-2 rounded">
-                                    📍 ${placeCount}箇所を巡る旅<br>
-                                    📅 ${formatDate(p.baseDateTime).split(' ')[0]} 出発予定
+                                    📍 ${placeCount}箇所 / 📅 ${formatDate(p.baseDateTime)}
                                 </div>
                             </div>
                             <div class="flex justify-between items-center mt-4 border-t pt-4">
                                 <div class="flex gap-2">
-                                    <button onclick="duplicatePlan('${p.id}')" class="text-xs text-gray-400 hover:text-indigo-600" title="複製">📄 複製</button>
-                                    <button onclick="deletePlan('${p.id}')" class="text-xs text-red-300 hover:text-red-500" title="削除">🗑️ 削除</button>
+                                    <button onclick="duplicatePlan('${p.id}')" class="text-xs text-gray-400 hover:text-indigo-600">複製</button>
+                                    <button onclick="deletePlan('${p.id}')" class="text-xs text-red-300 hover:text-red-500">削除</button>
                                 </div>
                                 <button onclick="loadPlan('${p.id}')" class="px-4 py-2 bg-indigo-600 text-white font-bold rounded-lg shadow hover:bg-indigo-700">開く 🚀</button>
                             </div>
@@ -343,21 +338,16 @@
                 <div class="space-y-12">
                     <div class="text-center">
                          <h2 class="text-3xl font-extrabold text-gray-800 mb-2">マイページ</h2>
-                         <p class="text-gray-500 mb-8">これまでの旅の計画を管理します</p>
-                         <button onclick="createNewPlan()" class="px-8 py-4 bg-gradient-brand text-white text-xl font-bold rounded-full shadow-xl hover:opacity-90 transform hover:-translate-y-1 transition">
+                         <button onclick="createNewPlan()" class="mt-4 px-8 py-4 bg-gradient-brand text-white text-xl font-bold rounded-full shadow-xl hover:opacity-90 transition">
                             + 新しい旅程を作成する
                          </button>
                     </div>
-
                     <div>
-                        <h3 class="text-xl font-bold text-gray-700 mb-4 border-l-4 border-indigo-500 pl-3">📂 保存済みプラン (${planList.length})</h3>
+                        <h3 class="text-xl font-bold text-gray-700 mb-4 border-l-4 border-indigo-500 pl-3">📂 保存済みプラン</h3>
                         ${plansHtml}
                     </div>
-
                     <div class="bg-white p-6 rounded-xl border border-gray-200">
-                        <h3 class="text-lg font-bold text-gray-700 mb-4 flex items-center gap-2">
-                            📖 保存済み地点リスト <span class="text-sm font-normal text-gray-400">(${savedLocations.length}件)</span>
-                        </h3>
+                        <h3 class="text-lg font-bold text-gray-700 mb-4">📖 保存済み地点 (${savedLocations.length}件)</h3>
                         ${locHtml}
                     </div>
                 </div>
@@ -392,13 +382,9 @@
                 const isFirst=i===0, isLast=i===currentPlan.stops.length-1;
                 const moveUp = !isFirst ? `<button onclick="moveStop(${i}, -1)" class="text-gray-400 hover:text-indigo-600 px-1">↑</button>` : '';
                 const moveDown = !isLast ? `<button onclick="moveStop(${i}, 1)" class="text-gray-400 hover:text-indigo-600 px-1">↓</button>` : '';
-                
-                // ★ 確定状態によるボタンと色の調整
                 const isValidated = s.location && s.location.trim() !== '';
                 const btnColor = isValidated ? 'bg-green-50 text-green-600' : 'bg-indigo-50 text-indigo-600';
-                const validationStatus = isValidated ? 
-                    `<p class="text-xs font-bold text-amber-600 mt-1">※Google検索用: ${s.location}</p>` : 
-                    `<p class="text-xs font-bold text-red-500 mt-1">※「住所確定」が必要です (ルート計算に使われます)</p>`;
+                const validationStatus = isValidated ? `<p class="text-xs font-bold text-amber-600 mt-1">※Google検索用: ${s.location}</p>` : `<p class="text-xs font-bold text-red-500 mt-1">※「住所確定」が必要です</p>`;
 
                 h += `
                     <div class="bg-white p-5 rounded-xl border ${s.isBaseTime ? 'border-red-500 ring-2 ring-red-100' : 'border-gray-200'} shadow-sm relative">
@@ -453,11 +439,8 @@
             document.getElementById('app-content').innerHTML = h;
         }
 
-        // ... (renderSelectionPage, renderSummaryPage, その他のヘルパー関数は省略/変更なし)
-
-        // --- 省略された関数 ---
-
-        async function renderSelectionPage() { /* ... (前回と同じコード) ... */
+        // ■ 2. ルート選択画面
+        async function renderSelectionPage() {
             const el = document.getElementById('app-content');
             el.innerHTML = '<div class="text-center p-20"><div class="text-2xl font-bold text-indigo-600 mb-2">ルート計算中...</div><p class="text-gray-500">Google Maps APIと通信しています</p></div>';
 
@@ -480,7 +463,7 @@
                     seg.mockRoutes.forEach(r => {
                         const isSel = r.id === seg.selectedRoute;
                         let roadsHtml = '';
-                        if(r.roads.length > 0) roadsHtml = `<div class="mt-2 text-xs text-gray-600 bg-gray-50 p-3 rounded border border-gray-200"><p class="font-bold mb-1 text-gray-500">有料区間あり:</p>${r.roads.map((name, idx) => `<div>① ${name}</div>`.replace('①', ['①','②','③','④','⑤'][idx]||'・')).join('')}</div>`;
+                        if(r.roads.length > 0) roadsHtml = `<div class="mt-2 text-xs text-gray-600 bg-gray-50 p-3 rounded border border-gray-200"><p class="font-bold mb-1 text-gray-500">有料区間あり:</p>${r.roads.map((name, idx) => `<div>${['①','②','③','④','⑤'][idx]||'・'} ${name}</div>`).join('')}</div>`;
                         else if (seg.travelMode === 'DRIVING') roadsHtml = `<div class="mt-2 text-xs text-green-600 font-bold pl-2">無料区間 / 下道</div>`;
                         
                         h += `<div onclick="selectRoute(${i}, '${r.id}')" class="p-4 border-2 rounded-lg cursor-pointer transition-all ${isSel ? 'border-indigo-500 bg-indigo-50' : 'border-gray-100 hover:border-indigo-300'}">
@@ -496,9 +479,15 @@
             currentPlan.segments.forEach((seg, i) => { if(seg.mockRoutes.length>0) drawMap(i, seg.selectedRoute); });
         }
         
-        function renderSummaryPage() { /* ... (前回と同じコード) ... */
-            if(!calculateAllSchedule()) return;
+        // ■ 3. しおり画面
+        function renderSummaryPage() {
+            if(!calculateAllSchedule()) {
+                showAlert('スケジュール計算エラー: 基点日時または地点情報が不正です。', 'error');
+                return navigate('input');
+            }
             let list = []; let c=1;
+            const baseDate = new Date(currentPlan.baseDateTime).toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'});
+
             currentPlan.stops.forEach((s, i) => {
                 const isLast = i===currentPlan.stops.length-1;
                 if(i===0) {
@@ -523,8 +512,8 @@
                         roadHtml = `<div class="mt-1 text-xs text-gray-500 font-bold">有料区間あり</div>`;
                         r.roads.forEach((name, idx) => { roadHtml += `<div class="text-xs text-gray-600 ml-1">${['①','②','③'][idx]||'・'} ${name}</div>`; });
                     }
-                    const navUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(currentPlan.stops[i].location)}&destination=${encodeURIComponent(currentPlan.stops[i+1].location)}&travelmode=${seg.travelMode.toLowerCase()}`;
-                    list.push({ type: 'move', idx: c++, time: `<span class="text-xs text-gray-400">${r.durationMinutes}分</span>`, title: `${getModeLabel(seg.travelMode)}移動`, sub: `${roadHtml} <div class="mt-2"><a href="${navUrl}" target="_blank" class="no-print inline-flex items-center gap-1 bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-xs font-bold hover:bg-blue-100">🧭 ナビ起動</a></div>` });
+                    const navUrl = `https://www.google.com/maps/dir/${encodeURIComponent(currentPlan.stops[i].location)}/${encodeURIComponent(currentPlan.stops[i+1].location)}/data=${seg.travelMode==='DRIVING'?'!4m2!4m1!3e0!3e1':''}`; 
+                    list.push({ type: 'move', idx: c++, time: `<span class="text-xs text-gray-400">${r.durationMinutes}分</span>`, title: `${getModeLabel(seg.travelMode)}移動`, sub: `${roadHtml} <div class="mt-2"><a href="${navUrl}" target="_blank" class="no-print inline-flex items-center gap-1 bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-xs font-bold hover:bg-blue-100">🧭 Google Mapsで開く</a></div>` });
                 }
             });
             const rows = list.map(item => {
@@ -534,18 +523,19 @@
                 const titleHtml = item.titleHtml ? item.titleHtml : `<div class="font-bold text-lg text-gray-800">${item.title}</div>`;
                 return `<div class="timeline-item flex mb-6 relative pl-6"><div class="timeline-line"></div><div class="timeline-dot ${dotClass} shadow-sm">${item.type==='point' ? '📍' : item.type==='move' ? '🚗' : '⏳'}</div><div class="ml-8 flex-1"><div class="flex flex-row items-baseline"><div class="${timeClass}">${item.time}</div><div class="flex-1">${titleHtml}<div class="mt-1">${item.sub}</div></div></div></div></div>`;
             }).join('');
-            document.getElementById('app-content').innerHTML = `<div class="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 max-w-3xl mx-auto print:shadow-none print:border-none"><div class="text-center mb-10 border-b pb-6"><div class="text-sm font-bold text-gray-400 mb-1">旅のしおり</div><h2 class="text-3xl font-extrabold text-indigo-900 mb-2">${currentPlan.planName}</h2><div class="text-gray-500 text-sm">作成日: ${new Date().toLocaleDateString()}</div></div><div class="timeline-container">${rows}</div><div class="mt-10 pt-6 border-t border-gray-200 page-break-inside-avoid"><h3 class="font-bold text-gray-700 mb-4 text-center">🗺️ 全行程ルートマップ</h3><div id="full-map-area" class="w-full h-80 bg-gray-100 rounded-xl shadow-inner print:h-96"></div></div></div><div class="mt-8 flex justify-center gap-4 no-print"><button onclick="validateAndNavigate('selection')" class="bg-gray-500 text-white px-8 py-3 rounded-full font-bold shadow hover:bg-gray-600">修正する</button> <button onclick="window.print()" class="bg-indigo-600 text-white px-8 py-3 rounded-full font-bold shadow-lg hover:bg-indigo-700">印刷 / PDF保存 🖨️</button></div>`;
+            document.getElementById('app-content').innerHTML = `<div class="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 max-w-3xl mx-auto print:shadow-none print:border-none"><div class="text-center mb-10 border-b pb-6"><div class="text-sm font-bold text-gray-400 mb-1">旅のしおり（${baseDate}）</div><h2 class="text-3xl font-extrabold text-indigo-900 mb-2">${currentPlan.planName}</h2><div class="text-gray-500 text-sm">作成日: ${new Date().toLocaleDateString()}</div></div><div class="timeline-container">${rows}</div><div class="mt-10 pt-6 border-t border-gray-200 page-break-inside-avoid"><h3 class="font-bold text-gray-700 mb-4 text-center">🗺️ 全行程ルートマップ</h3><div id="full-map-area" class="w-full h-80 bg-gray-100 rounded-xl shadow-inner print:h-96"></div></div></div><div class="mt-8 flex justify-center gap-4 no-print"><button onclick="validateAndNavigate('selection')" class="bg-gray-500 text-white px-8 py-3 rounded-full font-bold shadow hover:bg-gray-600">修正する</button> <button onclick="window.print()" class="bg-indigo-600 text-white px-8 py-3 rounded-full font-bold shadow-lg hover:bg-indigo-700">印刷 / PDF保存 🖨️</button></div>`;
             setTimeout(initFullMap, 500);
         }
 
-        function initFullMap() { /* ... (前回と同じコード) ... */
+        // --- 5. 地図描画・計算ヘルパー ---
+        function initFullMap() {
             const div = document.getElementById('full-map-area'); if(!div) return;
             const map = new google.maps.Map(div, {zoom: 8, center: {lat:35.681, lng:139.767}, disableDefaultUI: true});
             const renderer = new google.maps.DirectionsRenderer({ map: map, suppressMarkers: false, polylineOptions:{strokeColor:'#4f46e5', strokeWeight:4} });
             const waypoints = currentPlan.stops.slice(1, currentPlan.stops.length-1).map(s => ({ location: s.location, stopover: true }));
             new google.maps.DirectionsService().route({ origin: currentPlan.stops[0].location, destination: currentPlan.stops[currentPlan.stops.length-1].location, waypoints: waypoints, travelMode: 'DRIVING' }, (res, status) => { if(status==='OK') renderer.setDirections(res); });
         }
-        function drawMap(index, routeId) { /* ... (前回と同じコード) ... */
+        function drawMap(index, routeId) {
             const div = document.getElementById(`map-area-${index}`); if(!div) return; div.innerHTML = '';
             const seg = currentPlan.segments[index]; const rData = seg.mockRoutes.find(r=>r.id===routeId); if(!rData) return;
             const map = new google.maps.Map(div, { zoom: 10, center: {lat:35.681, lng:139.767}, disableDefaultUI:true });
@@ -553,14 +543,15 @@
             const renderer = new google.maps.DirectionsRenderer({ map: map, suppressMarkers:false, polylineOptions: polyOpts });
             new google.maps.DirectionsService().route({ origin: currentPlan.stops[index].location, destination: currentPlan.stops[index+1].location, travelMode: seg.travelMode, provideRouteAlternatives: true }, (res, status) => { if(status==='OK') { const target = res.routes.find(r => r.overview_path.length === rData.overview_path.length) || res.routes[0]; renderer.setDirections({routes:[target], request:res.request}); } });
         }
-        function calculateAllSchedule() { /* ... (前回と同じコード) ... */
+        function calculateAllSchedule() {
             const baseIdx = currentPlan.stops.findIndex(s=>s.isBaseTime); if(baseIdx===-1) return false;
             const roundUnit = currentPlan.roundingMinutes || 0; let t = currentPlan.baseDateTime;
             for(let i=baseIdx; i<currentPlan.stops.length; i++){ currentPlan.stops[i].arrivalTime = t; const dep = addMinutes(t, currentPlan.stops[i].stayMinutes); currentPlan.stops[i].departureTime = ceilTime(dep, roundUnit); if(i < currentPlan.segments.length) { const seg=currentPlan.segments[i], r=seg.mockRoutes.find(x=>x.id===seg.selectedRoute); t = addMinutes(currentPlan.stops[i].departureTime, r?r.durationMinutes:30); } }
             t = currentPlan.stops[baseIdx].arrivalTime; for(let i=baseIdx-1; i>=0; i--){ const seg=currentPlan.segments[i], r=seg.mockRoutes.find(x=>x.id===seg.selectedRoute); const dur = r?r.durationMinutes:30; const rawDep = addMinutes(currentPlan.stops[i+1].arrivalTime, -dur); currentPlan.stops[i].departureTime = floorTime(rawDep, roundUnit); currentPlan.stops[i].arrivalTime = addMinutes(currentPlan.stops[i].departureTime, -currentPlan.stops[i].stayMinutes); } return true;
         }
 
-        function updateName(i, v) { currentPlan.stops[i].name = v; currentPlan.stops[i].location=''; saveState(); } // ★ 地点名変更時にlocationをリセット
+        // --- 6. ヘルパー関数 ---
+        function updateName(i, v) { currentPlan.stops[i].name = v; currentPlan.stops[i].location=''; saveState(); } 
         function updateRounding(v) { currentPlan.roundingMinutes = parseInt(v); saveState(); }
         function selectRoute(i, rid) { currentPlan.segments[i].selectedRoute = rid; saveState(); renderSelectionPage(); }
         function moveStop(i, dir) { if(dir===-1&&i===0)return; if(dir===1&&i===currentPlan.stops.length-1)return; const t=currentPlan.stops[i]; currentPlan.stops[i]=currentPlan.stops[i+dir]; currentPlan.stops[i+dir]=t; currentPlan.segments=[]; saveState(); renderInputPage(); }
@@ -574,8 +565,6 @@
         function clearData(){ if(confirm('全データを初期化しますか？')) { localStorage.removeItem('planList'); localStorage.removeItem('itineraryState'); location.reload(); } }
         function showAlert(m,t){ const c=document.getElementById('message-container'); c.innerHTML=`<div class="px-4 py-2 text-white rounded shadow ${t==='error'?'bg-red-500':'bg-indigo-600'}">${m}</div>`; setTimeout(()=>c.innerHTML='',5000); }
 
-        window.onload = function() { renderDashboard(); updateDatalist(); }
     </script>
 </body>
 </html>
-
