@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>旅程プランナー (v13.0)</title>
+    <title>旅程プランナー (v14.0)</title>
     
     <meta name="robots" content="noindex, nofollow">
     
@@ -33,6 +33,8 @@
             body { background: white; padding: 0; }
             .shadow-xl, .shadow-md, .border { box-shadow: none !important; border: none !important; }
             .ad-space { display: none !important; } /* 広告は印刷しない */
+            /* 固定ヘッダー/フッターを解除 */
+            body { padding-top: 0 !important; padding-bottom: 0 !important; }
         }
         .print-only { display: none; }
         
@@ -40,24 +42,32 @@
         .card-hover { transition: all 0.2s; }
         .card-hover:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
         
-        /* 広告スペース用 */
-        .ad-space { background-color: #f3f4f6; color: #9ca3af; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: bold; border: 2px dashed #e5e7eb; }
+        /* ★ 広告スペース用 - 位置固定に修正 ★ */
+        .ad-space { background-color: #f3f4f6; color: #9ca3af; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: bold; border: 2px dashed #e5e7eb; z-index: 999; }
+        .ad-top-fixed { position: fixed; top: 0; left: 0; right: 0; height: 5rem; max-width: 100%; } /* スマホでも横幅100%を確保 */
+        .ad-bottom-fixed { position: fixed; bottom: 0; left: 0; right: 0; height: 4rem; max-width: 100%; }
+        
+        /* 固定広告スペースに合わせてBodyにpaddingを追加 */
+        body { padding-top: 5rem; padding-bottom: 4rem; } 
+        
+        /* メインコンテンツを中央に */
+        .main-container { max-width: 5xl; margin-left: auto; margin-right: auto; }
     </style>
     
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAOStiNglNEGEnPnhDxJG0RSQqgJXVtUQw&libraries=places,geometry&callback=initMap" async defer></script>
 </head>
 <body class="bg-gray-50 min-h-screen text-gray-800 flex flex-col items-center">
 
-    <div class="ad-space w-full max-w-5xl h-16 sm:h-20 my-2 no-print">広告スペース (Top)</div>
+    <div class="ad-space ad-top-fixed no-print">広告スペース (Top Fixed)</div>
 
-    <div class="w-full max-w-5xl bg-white rounded-3xl shadow-xl overflow-hidden print:overflow-visible min-h-[800px] flex flex-col">
+    <div class="main-container w-full bg-white rounded-3xl shadow-xl overflow-hidden print:overflow-visible min-h-[800px] flex flex-col">
         <div class="print-only text-center py-4 border-b">
             <h1 class="text-3xl font-extrabold text-gray-800">旅のしおり</h1>
         </div>
 
         <header class="p-4 sm:p-6 bg-indigo-700 text-white shadow-md flex justify-between items-center no-print flex-shrink-0">
             <h1 onclick="navigate('dashboard')" class="text-xl sm:text-2xl font-extrabold flex items-center gap-2 cursor-pointer hover:opacity-80">
-                <span>🗺️</span> 旅程プランナー <span class="text-xs bg-indigo-500 px-2 py-1 rounded-full">v13.0</span>
+                <span>🗺️</span> 旅程プランナー <span class="text-xs bg-indigo-500 px-2 py-1 rounded-full">v14.0</span>
             </h1>
             <div class="flex gap-2 sm:gap-4 text-xs sm:text-sm items-center">
                 <a id="feedback-link" href="#" target="_blank" class="bg-white text-indigo-700 px-3 py-1 rounded-full font-bold hover:bg-gray-100 transition flex items-center gap-1">
@@ -83,14 +93,14 @@
         <div id="message-container" class="fixed bottom-4 right-4 z-50 no-print"></div>
     </div>
 
-    <div class="ad-space w-full max-w-5xl h-16 sm:h-20 my-2 no-print">広告スペース (Bottom)</div>
+    <div class="ad-space ad-bottom-fixed no-print">広告スペース (Bottom Fixed)</div>
 
     <datalist id="saved-locations-list"></datalist>
 
     <script>
         // --- 0. 設定 ---
-        const FEEDBACK_URL = "https://forms.gle/your-form-id-here"; // ★ GoogleフォームのURLを設定
-        const APP_VERSION = '13.0';
+        const FEEDBACK_URL = "https://forms.gle/your-form-id-here"; 
+        const APP_VERSION = '14.0';
         function initMap() { console.log("Maps API Loaded"); }
 
         window.onload = function() {
@@ -105,10 +115,11 @@
         let currentPlan = null;
         let mapInstances = {};
 
-        // デフォルト: 4地点、3番目を基点、滞在10分
+        // デフォルト: 4地点、3番目を基点、滞在10分、車
         const generateDefaultItinerary = () => {
             const now = new Date();
-            now.setMinutes(now.getMinutes() + 10); // 現在時刻の少し後
+            now.setDate(now.getDate() + 1); // 翌日
+            now.setHours(12, 0, 0, 0); // 12:00
             const baseTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
             return {
@@ -125,33 +136,45 @@
                     { id: 's3', name: '', location: '', isBaseTime: true, stayMinutes: 10, stayReason: '', memo: '' }, // デフォルト基点
                     { id: 's4', name: '', location: '', isBaseTime: false, stayMinutes: 0, stayReason: '', memo: '' }
                 ],
-                segments: [],
+                segments: [
+                    { travelMode: 'DRIVING', mockRoutes: [], selectedRoute: null },
+                    { travelMode: 'DRIVING', mockRoutes: [], selectedRoute: null },
+                    { travelMode: 'DRIVING', mockRoutes: [], selectedRoute: null }
+                ],
                 currentPage: 'input'
             };
         };
 
-        // サンプルプランデータ
-        const SAMPLE_PLAN = {
-            id: 'sample',
-            version: APP_VERSION,
-            planName: "東京観光サンプルプラン（これを基に作成）",
-            updatedAt: new Date().toISOString(),
-            baseDateTime: "2025-05-01T12:00",
-            roundingMinutes: 10,
-            gatheringMinutes: 10,
-            stops: [
-                { id: 'ss1', name: '東京駅', location: '東京駅', isBaseTime: false, stayMinutes: 0, stayReason: '', memo: '' },
-                { id: 'ss2', name: '浅草寺', location: '浅草寺', isBaseTime: false, stayMinutes: 60, stayReason: '観光', memo: '仲見世通りでお土産' },
-                { id: 'ss3', name: '東京スカイツリー', location: '東京スカイツリー', isBaseTime: true, stayMinutes: 90, stayReason: '展望台・昼食', memo: '12:00に予約済み' },
-                { id: 'ss4', name: '上野駅', location: '上野駅', isBaseTime: false, stayMinutes: 0, stayReason: '', memo: '' }
-            ],
-            segments: [
-                { travelMode: 'TRANSIT', mockRoutes: [], selectedRoute: null },
-                { travelMode: 'WALKING', mockRoutes: [], selectedRoute: null },
-                { travelMode: 'TRANSIT', mockRoutes: [], selectedRoute: null }
-            ],
-            currentPage: 'input'
+        // サンプルプランデータ (住所情報を追加)
+        const getSamplePlan = () => {
+            const now = new Date();
+            now.setDate(now.getDate() + 1); // 翌日
+            now.setHours(12, 0, 0, 0); // 12:00
+            const baseTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+            return {
+                id: 'sample',
+                version: APP_VERSION,
+                planName: "東京観光プラン (コピー)",
+                updatedAt: new Date().toISOString(),
+                baseDateTime: baseTime, // 翌日12:00
+                roundingMinutes: 10,
+                gatheringMinutes: 10,
+                stops: [
+                    { id: 'ss1', name: '東京駅', location: '日本、東京都千代田区丸の内１丁目', isBaseTime: false, stayMinutes: 0, stayReason: '', memo: '' },
+                    { id: 'ss2', name: '浅草寺', location: '日本、東京都台東区浅草２丁目３−１ 浅草寺', isBaseTime: false, stayMinutes: 60, stayReason: '観光', memo: '仲見世通りでお土産' },
+                    { id: 'ss3', name: '東京スカイツリー', location: '日本、〒131-0045 東京都墨田区押上１丁目１−２', isBaseTime: true, stayMinutes: 90, stayReason: '展望台・昼食', memo: '12:00に予約済み' },
+                    { id: 'ss4', name: '上野駅', location: '日本、東京都台東区上野７丁目１−１', isBaseTime: false, stayMinutes: 0, stayReason: '', memo: '' }
+                ],
+                segments: [
+                    { travelMode: 'DRIVING', mockRoutes: [], selectedRoute: null }, // 1. 東京駅 → 浅草寺 (車)
+                    { travelMode: 'WALKING', mockRoutes: [], selectedRoute: null }, // 2. 浅草寺 → スカイツリー (徒歩)
+                    { travelMode: 'DRIVING', mockRoutes: [], selectedRoute: null }  // 3. スカイツリー → 上野駅 (車)
+                ],
+                currentPage: 'input'
+            };
         };
+
 
         function migrateData() {
             const oldState = localStorage.getItem('itineraryState');
@@ -174,14 +197,17 @@
         }
 
         function createFromSample() {
-            const newPlan = JSON.parse(JSON.stringify(SAMPLE_PLAN));
+            const sample = getSamplePlan();
+            const newPlan = JSON.parse(JSON.stringify(sample));
             newPlan.id = 'plan_' + Date.now();
-            newPlan.planName = "東京観光プラン (コピー)";
             newPlan.updatedAt = new Date().toISOString();
-            // 日時を現在に合わせる
-            const now = new Date();
-            newPlan.baseDateTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
             
+            // セグメントのroute情報は再計算が必要なためクリア
+            newPlan.segments.forEach(seg => {
+                seg.mockRoutes = [];
+                seg.selectedRoute = null;
+            });
+
             planList.unshift(newPlan);
             saveAllPlans();
             loadPlan(newPlan.id);
@@ -226,7 +252,7 @@
             localStorage.setItem('savedLocations', JSON.stringify(savedLocations));
         }
 
-        // --- 2. ユーティリティ & 計算 ---
+        // --- 2. ユーティリティ & 計算 (省略なし) ---
         function addMinutes(iso, m) { const d=new Date(iso); d.setMinutes(d.getMinutes()+m); const tz=d.getTimezoneOffset()*60000; return (new Date(d-tz)).toISOString().slice(0,16); }
         function formatTime(iso) { if(!iso) return "--:--"; const d=new Date(iso); return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`; }
         function formatDate(iso) { if(!iso) return ""; const d=new Date(iso); return d.toLocaleDateString(); }
@@ -382,7 +408,7 @@
                 <div class="space-y-12">
                     <div class="text-center">
                          <h2 class="text-3xl font-extrabold text-gray-800 mb-4">マイページ</h2>
-                         <div class="flex justify-center gap-4">
+                         <div class="flex justify-center gap-4 flex-wrap">
                              <button onclick="createFromSample()" class="px-6 py-3 bg-white border-2 border-indigo-200 text-indigo-600 font-bold rounded-full shadow hover:bg-indigo-50 transition flex flex-col items-center">
                                 <span class="text-xs text-indigo-400">使い方をチェック</span>
                                 📖 サンプルプランから作成
@@ -434,12 +460,13 @@
                 const moveUp = !isFirst ? `<button onclick="moveStop(${i}, -1)" class="text-gray-400 hover:text-indigo-600 px-1">↑</button>` : '';
                 const moveDown = !isLast ? `<button onclick="moveStop(${i}, 1)" class="text-gray-400 hover:text-indigo-600 px-1">↓</button>` : '';
                 
-                // ★ 確定ボタンのデザイン変更
                 const isValidated = s.location && s.location.trim() !== '';
                 const btnColor = isValidated ? 'bg-green-100 text-green-700 border-green-200' : 'bg-indigo-100 text-indigo-700 border-indigo-200';
                 const btnText = isValidated ? '確定済' : '確定';
+                
+                // ★ 確定後の表示ロジックを修正
                 const validationStatus = isValidated ? 
-                    `<p class="text-xs font-bold text-amber-600 mt-1 pl-1">※Google検索: ${s.location}</p>` : 
+                    `<p class="text-xs font-bold text-amber-600 mt-1 pl-1 truncate">※Google検索: ${s.location}</p>` : 
                     `<p class="text-xs text-gray-400 mt-1 pl-1">※Google検索: 確定して住所が合っているか確認して下さい</p>`;
 
                 h += `
@@ -502,9 +529,7 @@
             document.getElementById('app-content').innerHTML = h;
         }
 
-        // ... (renderSelectionPage, renderSummaryPage, helper functions - 前バージョンと同じ) ...
-        // 省略せずに全て記述します
-
+        // ■ 2. ルート選択画面
         async function renderSelectionPage() {
             const el = document.getElementById('app-content');
             el.innerHTML = '<div class="text-center p-20"><div class="text-2xl font-bold text-indigo-600 mb-2">ルート計算中...</div><p class="text-gray-500">Google Maps APIと通信しています</p></div>';
@@ -544,6 +569,7 @@
             currentPlan.segments.forEach((seg, i) => { if(seg.mockRoutes.length>0) drawMap(i, seg.selectedRoute); });
         }
         
+        // ■ 3. しおり画面
         function renderSummaryPage() {
             if(!calculateAllSchedule()) {
                 showAlert('スケジュール計算エラー: 基点日時または地点情報が不正です。', 'error');
@@ -591,7 +617,7 @@
             setTimeout(initFullMap, 500);
         }
 
-        // --- ヘルパー関数 ---
+        // --- 5. 地図描画・計算ヘルパー ---
         function initFullMap() {
             const div = document.getElementById('full-map-area'); if(!div) return;
             const map = new google.maps.Map(div, {zoom: 8, center: {lat:35.681, lng:139.767}, disableDefaultUI: true});
@@ -614,6 +640,7 @@
             t = currentPlan.stops[baseIdx].arrivalTime; for(let i=baseIdx-1; i>=0; i--){ const seg=currentPlan.segments[i], r=seg.mockRoutes.find(x=>x.id===seg.selectedRoute); const dur = r?r.durationMinutes:30; const rawDep = addMinutes(currentPlan.stops[i+1].arrivalTime, -dur); currentPlan.stops[i].departureTime = floorTime(rawDep, roundUnit); currentPlan.stops[i].arrivalTime = addMinutes(currentPlan.stops[i].departureTime, -currentPlan.stops[i].stayMinutes); } return true;
         }
 
+        // --- 6. ヘルパー関数 ---
         function updateName(i, v) { currentPlan.stops[i].name = v; currentPlan.stops[i].location=''; saveState(); } 
         function updateRounding(v) { currentPlan.roundingMinutes = parseInt(v); saveState(); }
         function selectRoute(i, rid) { currentPlan.segments[i].selectedRoute = rid; saveState(); renderSelectionPage(); }
