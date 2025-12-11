@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>旅程プランナー (v15.0)</title>
+    <title>旅程プランナー (v16.0)</title>
     
     <meta name="robots" content="noindex, nofollow">
     
@@ -63,7 +63,7 @@
 
         <header class="p-4 sm:p-6 bg-indigo-700 text-white shadow-md flex justify-between items-center no-print flex-shrink-0">
             <h1 onclick="navigate('dashboard')" class="text-xl sm:text-2xl font-extrabold flex items-center gap-2 cursor-pointer hover:opacity-80">
-                <span>🗺️</span> 旅程プランナー <span class="text-xs bg-indigo-500 px-2 py-1 rounded-full">v15.0</span>
+                <span>🗺️</span> 旅程プランナー <span class="text-xs bg-indigo-500 px-2 py-1 rounded-full">v16.0</span>
             </h1>
             <div class="flex gap-2 sm:gap-4 text-xs sm:text-sm items-center">
                 <a id="feedback-link" href="#" target="_blank" class="bg-white text-indigo-700 px-3 py-1 rounded-full font-bold hover:bg-gray-100 transition flex items-center gap-1">
@@ -96,13 +96,19 @@
     <script>
         // --- 0. 設定 ---
         const FEEDBACK_URL = "https://forms.gle/pChcuFEeCsLpf9La7"; 
-        const APP_VERSION = '15.0';
+        const APP_VERSION = '16.0';
         function initMap() { console.log("Maps API Loaded"); }
 
         window.onload = function() {
             const fbLink = document.getElementById('feedback-link');
             if(fbLink) fbLink.href = FEEDBACK_URL;
-            migrateData(); renderDashboard(); updateDatalist();
+            
+            // ★ URL共有データの読み込みチェック
+            checkImportUrl();
+
+            migrateData(); 
+            renderDashboard(); 
+            updateDatalist();
         }
 
         // --- 1. データ管理 ---
@@ -110,6 +116,70 @@
         let savedLocations = JSON.parse(localStorage.getItem('savedLocations')) || [];
         let currentPlan = null;
         let mapInstances = {};
+
+        // ★★★ 共有機能: URLからデータを取り込む ★★★
+        function checkImportUrl() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const sharedData = urlParams.get('data');
+            
+            if (sharedData) {
+                try {
+                    // Base64デコード -> JSONパース (日本語対応)
+                    const jsonString = decodeURIComponent(escape(atob(sharedData)));
+                    const importedPlan = JSON.parse(jsonString);
+                    
+                    // IDを新しくして衝突を防ぐ
+                    importedPlan.id = 'import_' + Date.now();
+                    importedPlan.planName = "【共有】" + importedPlan.planName;
+                    importedPlan.updatedAt = new Date().toISOString();
+                    
+                    // リストに追加
+                    planList.unshift(importedPlan);
+                    saveAllPlans();
+                    
+                    // URLパラメータを削除（リロード時の再インポート防止）
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                    
+                    showAlert('共有されたプランを読み込みました！', 'success');
+                } catch (e) {
+                    console.error(e);
+                    showAlert('共有データの読み込みに失敗しました。', 'error');
+                }
+            }
+        }
+
+        // ★★★ 共有機能: プランをURLにしてコピー ★★★
+        function sharePlan(id) {
+            const plan = planList.find(p => p.id === id);
+            if (!plan) return;
+
+            // データ軽量化: mockRoutesなど重いデータは削除してコピーを作成
+            const shareObj = JSON.parse(JSON.stringify(plan));
+            shareObj.segments.forEach(seg => {
+                seg.mockRoutes = [];
+                seg.selectedRoute = null; // 受け取った側で再計算させる
+            });
+
+            try {
+                // JSON -> 文字列 -> Base64エンコード
+                const jsonString = JSON.stringify(shareObj);
+                const encodedData = btoa(unescape(encodeURIComponent(jsonString)));
+                
+                // 現在のURLのベースを取得
+                const baseUrl = window.location.origin + window.location.pathname;
+                const shareUrl = `${baseUrl}?data=${encodedData}`;
+
+                // クリップボードにコピー
+                navigator.clipboard.writeText(shareUrl).then(() => {
+                    showAlert('🔗 共有用URLをコピーしました！LINEなどで送れます。', 'success');
+                }).catch(err => {
+                    prompt("以下のURLをコピーして送ってください:", shareUrl);
+                });
+
+            } catch (e) {
+                showAlert('データの圧縮に失敗しました。プランが大きすぎる可能性があります。', 'error');
+            }
+        }
 
         const generateDefaultItinerary = () => {
             const now = new Date();
@@ -367,8 +437,9 @@
                             </div>
                             <div class="flex justify-between items-center mt-4 border-t pt-4">
                                 <div class="flex gap-2">
-                                    <button onclick="duplicatePlan('${p.id}')" class="text-xs text-gray-400 hover:text-indigo-600">複製</button>
-                                    <button onclick="deletePlan('${p.id}')" class="text-xs text-red-300 hover:text-red-500">削除</button>
+                                    <button onclick="sharePlan('${p.id}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-bold" title="共有">🔗 共有</button>
+                                    <button onclick="duplicatePlan('${p.id}')" class="text-xs text-gray-400 hover:text-indigo-600" title="複製">📄 複製</button>
+                                    <button onclick="deletePlan('${p.id}')" class="text-xs text-red-300 hover:text-red-500" title="削除">🗑️ 削除</button>
                                 </div>
                                 <button onclick="loadPlan('${p.id}')" class="px-4 py-2 bg-indigo-600 text-white font-bold rounded-lg shadow hover:bg-indigo-700">開く 🚀</button>
                             </div>
@@ -513,7 +584,7 @@
             document.getElementById('app-content').innerHTML = h;
         }
 
-        // ... (renderSelectionPage, renderSummaryPage, helper functions - 前バージョンと同じ) ...
+        // ... (renderSelectionPage, renderSummaryPage, helper functions - 省略なし) ...
         async function renderSelectionPage() {
             const el = document.getElementById('app-content');
             el.innerHTML = '<div class="text-center p-20"><div class="text-2xl font-bold text-indigo-600 mb-2">ルート計算中...</div><p class="text-gray-500">Google Maps APIと通信しています</p></div>';
