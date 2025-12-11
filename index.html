@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>旅程プランナー (v16.0)</title>
+    <title>旅程プランナー (v17.0)</title>
     
     <meta name="robots" content="noindex, nofollow">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -63,7 +65,7 @@
 
         <header class="p-4 sm:p-6 bg-indigo-700 text-white shadow-md flex justify-between items-center no-print flex-shrink-0">
             <h1 onclick="navigate('dashboard')" class="text-xl sm:text-2xl font-extrabold flex items-center gap-2 cursor-pointer hover:opacity-80">
-                <span>🗺️</span> 旅程プランナー <span class="text-xs bg-indigo-500 px-2 py-1 rounded-full">v16.0</span>
+                <span>🗺️</span> 旅程プランナー <span class="text-xs bg-indigo-500 px-2 py-1 rounded-full">v17.0</span>
             </h1>
             <div class="flex gap-2 sm:gap-4 text-xs sm:text-sm items-center">
                 <a id="feedback-link" href="#" target="_blank" class="bg-white text-indigo-700 px-3 py-1 rounded-full font-bold hover:bg-gray-100 transition flex items-center gap-1">
@@ -96,7 +98,7 @@
     <script>
         // --- 0. 設定 ---
         const FEEDBACK_URL = "https://forms.gle/pChcuFEeCsLpf9La7"; 
-        const APP_VERSION = '16.0';
+        const APP_VERSION = '17.0';
         function initMap() { console.log("Maps API Loaded"); }
 
         window.onload = function() {
@@ -117,15 +119,17 @@
         let currentPlan = null;
         let mapInstances = {};
 
-        // ★★★ 共有機能: URLからデータを取り込む ★★★
+        // ★★★ 共有機能: 読み込み (LZString対応) ★★★
         function checkImportUrl() {
             const urlParams = new URLSearchParams(window.location.search);
-            const sharedData = urlParams.get('data');
+            const sharedData = urlParams.get('d'); // パラメータ名を 'd' に短縮
             
             if (sharedData) {
                 try {
-                    // Base64デコード -> JSONパース (日本語対応)
-                    const jsonString = decodeURIComponent(escape(atob(sharedData)));
+                    // LZStringで解凍
+                    const jsonString = LZString.decompressFromEncodedURIComponent(sharedData);
+                    if (!jsonString) throw new Error("Decompression failed");
+                    
                     const importedPlan = JSON.parse(jsonString);
                     
                     // IDを新しくして衝突を防ぐ
@@ -137,47 +141,66 @@
                     planList.unshift(importedPlan);
                     saveAllPlans();
                     
-                    // URLパラメータを削除（リロード時の再インポート防止）
+                    // URLパラメータを削除
                     window.history.replaceState({}, document.title, window.location.pathname);
                     
-                    showAlert('共有されたプランを読み込みました！', 'success');
+                    showAlert('共有されたプランを読み込みました！マイページを確認してください。', 'success');
                 } catch (e) {
-                    console.error(e);
-                    showAlert('共有データの読み込みに失敗しました。', 'error');
+                    console.error("Import Error:", e);
+                    showAlert('共有データの読み込みに失敗しました。URLが破損しているか、古い形式の可能性があります。', 'error');
                 }
             }
         }
 
-        // ★★★ 共有機能: プランをURLにしてコピー ★★★
+        // ★★★ 共有機能: 書き出し (LZString対応) ★★★
         function sharePlan(id) {
             const plan = planList.find(p => p.id === id);
             if (!plan) return;
 
-            // データ軽量化: mockRoutesなど重いデータは削除してコピーを作成
-            const shareObj = JSON.parse(JSON.stringify(plan));
-            shareObj.segments.forEach(seg => {
-                seg.mockRoutes = [];
-                seg.selectedRoute = null; // 受け取った側で再計算させる
-            });
+            // データ断捨離: 必要な情報だけを抽出したクリーンなオブジェクトを作成
+            const cleanPlan = {
+                v: APP_VERSION,
+                planName: plan.planName,
+                baseDateTime: plan.baseDateTime,
+                roundingMinutes: plan.roundingMinutes,
+                gatheringMinutes: plan.gatheringMinutes,
+                stops: plan.stops.map(s => ({
+                    name: s.name,
+                    location: s.location,
+                    isBaseTime: s.isBaseTime,
+                    stayMinutes: s.stayMinutes,
+                    stayReason: s.stayReason,
+                    memo: s.memo
+                })),
+                segments: plan.segments.map(s => ({
+                    travelMode: s.travelMode
+                    // mockRoutesなどは共有しない（再計算させるため）
+                }))
+            };
 
             try {
-                // JSON -> 文字列 -> Base64エンコード
-                const jsonString = JSON.stringify(shareObj);
-                const encodedData = btoa(unescape(encodeURIComponent(jsonString)));
+                // JSON -> 文字列 -> LZString圧縮
+                const jsonString = JSON.stringify(cleanPlan);
+                const compressed = LZString.compressToEncodedURIComponent(jsonString);
                 
                 // 現在のURLのベースを取得
                 const baseUrl = window.location.origin + window.location.pathname;
-                const shareUrl = `${baseUrl}?data=${encodedData}`;
+                const shareUrl = `${baseUrl}?d=${compressed}`;
 
                 // クリップボードにコピー
-                navigator.clipboard.writeText(shareUrl).then(() => {
-                    showAlert('🔗 共有用URLをコピーしました！LINEなどで送れます。', 'success');
-                }).catch(err => {
+                if (navigator.clipboard) {
+                    navigator.clipboard.writeText(shareUrl).then(() => {
+                        showAlert('🔗 短縮URLをコピーしました！LINEなどで送れます。', 'success');
+                    }).catch(err => {
+                        prompt("以下のURLをコピーして送ってください:", shareUrl);
+                    });
+                } else {
                     prompt("以下のURLをコピーして送ってください:", shareUrl);
-                });
+                }
 
             } catch (e) {
-                showAlert('データの圧縮に失敗しました。プランが大きすぎる可能性があります。', 'error');
+                console.error(e);
+                showAlert('データの圧縮に失敗しました。', 'error');
             }
         }
 
@@ -438,8 +461,8 @@
                             <div class="flex justify-between items-center mt-4 border-t pt-4">
                                 <div class="flex gap-2">
                                     <button onclick="sharePlan('${p.id}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-bold" title="共有">🔗 共有</button>
-                                    <button onclick="duplicatePlan('${p.id}')" class="text-xs text-gray-400 hover:text-indigo-600" title="複製">📄 複製</button>
-                                    <button onclick="deletePlan('${p.id}')" class="text-xs text-red-300 hover:text-red-500" title="削除">🗑️ 削除</button>
+                                    <button onclick="duplicatePlan('${p.id}')" class="text-xs text-gray-400 hover:text-indigo-600">複製</button>
+                                    <button onclick="deletePlan('${p.id}')" class="text-xs text-red-300 hover:text-red-500">削除</button>
                                 </div>
                                 <button onclick="loadPlan('${p.id}')" class="px-4 py-2 bg-indigo-600 text-white font-bold rounded-lg shadow hover:bg-indigo-700">開く 🚀</button>
                             </div>
